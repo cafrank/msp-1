@@ -4,7 +4,7 @@
 namespace fcu {
 
 FlightController::FlightController() :
-    msp_version_(1),
+    msp_version_(2),
     control_source_(ControlSource::NONE),
     msp_timer_(std::bind(&FlightController::generateMSP, this), 0.1) {}
 
@@ -12,6 +12,9 @@ FlightController::~FlightController() { disconnect(); }
 
 bool FlightController::connect(const std::string &device, const size_t baudrate,
                                const double &timeout, const bool print_info) {
+
+    client_.setLoggingLevel(msp::client::LoggingLevel::DEBUG);
+
     if(!client_.start(device, baudrate)) return false;
 
     msp::msg::FcVariant fcvar(fw_variant_);
@@ -26,6 +29,7 @@ bool FlightController::connect(const std::string &device, const size_t baudrate,
             if(print_info) std::cout << api_version;
             msp_version_ = api_version.major();
             client_.setVersion(msp_version_);
+            client_.setVersion(2);
         }
     }
 
