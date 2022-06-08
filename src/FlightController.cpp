@@ -13,7 +13,7 @@ FlightController::~FlightController() { disconnect(); }
 bool FlightController::connect(const std::string &device, const size_t baudrate,
                                const double &timeout, const bool print_info) {
 
-    client_.setLoggingLevel(msp::client::LoggingLevel::DEBUG);
+    // client_.setLoggingLevel(msp::client::LoggingLevel::DEBUG);
 
     if(!client_.start(device, baudrate)) return false;
 
@@ -277,6 +277,73 @@ bool FlightController::setMotors(
     msp::msg::SetMotor motor(fw_variant_);
     motor.motor = motor_values;
     return client_.sendMessage(motor);
+}
+
+bool FlightController::setInavMixer(uint8_t platform, uint16_t preset, uint8_t hasFlaps, uint8_t invertMotorDir) {
+    msp::msg::SetInavMixer mixerConfig(fw_variant_);
+    mixerConfig.motorDirectionInverted = invertMotorDir;
+    mixerConfig.wasYawJumpPreventLimit = 0;            // Ignored
+    mixerConfig.platformType = platform;
+    mixerConfig.hasFlaps = hasFlaps;
+    mixerConfig.appliedMixerPreset = preset;
+    mixerConfig.maxSupportedMotors = 8;                // Unused at the moment;
+    mixerConfig.maxSupportedServos = 8;                // Unused at the moment;
+    return client_.sendMessage(mixerConfig);
+}
+
+bool FlightController::setMixer(const uint8_t mode) {
+    msp::msg::SetMixer mixer(fw_variant_);
+    mixer.mode = mode;
+    return client_.sendMessage(mixer);
+}
+
+bool FlightController::setPids(const std::vector<std::vector<uint16_t>> pids) {
+    msp::msg::SetPid2 sps(fw_variant_);
+    sps.decode(pids);
+    return client_.sendMessage(sps);
+}
+
+bool FlightController::setInavProgrammingPid(uint8_t idx, const std::vector<uint16_t> pid) {
+    msp::msg::InavSetProgrammingPid spp(fw_variant_);
+    spp.decode(idx, pid);
+    return client_.sendMessage(spp);
+}
+
+#ifdef THE_BETAFLIGHT_WAY
+bool FlightController::setServoMixRule(const uint8_t index, const std::vector<uint8_t> rule_values) {
+    msp::msg::SetServoMixRule smr(fw_variant_);
+    msp::msg::ServoMixRule rule = {};
+    rule.unpack_from(rule_values);
+    smr.index = index;
+    smr.rule = rule;
+    return client_.sendMessage(smr);
+}
+#else	// INAV
+bool FlightController::setServoMixRule(const uint8_t index, uint8_t chan, uint8_t src, uint16_t rate, uint8_t speed) {
+    msp::msg::SetServoMixRule smr(fw_variant_);
+    msp::msg::ServoMixRule rule = {};
+    rule.target_channel = chan;
+    rule.input_source   = src;
+    rule.rate          = rate;
+    rule.speed         = speed;
+    smr.index = index;
+    smr.rule = rule;
+    return client_.sendMessage(smr);
+}
+#endif
+
+bool FlightController::setCommonMotorMixer(const uint8_t index, const std::vector<uint8_t> mix) {
+    msp::msg::CommonSetMotorMixer smm(fw_variant_);
+    smm.index = index;
+    smm.mixer.unpack_from(mix);
+    return client_.sendMessage(smm);
+}
+
+bool FlightController::setCommonMotorMixer(const uint8_t index, const std::vector<float> mix) {
+    msp::msg::CommonSetMotorMixer smm(fw_variant_);
+    smm.index = index;
+    smm.mixer.unpack_float(mix);
+    return client_.sendMessage(smm);
 }
 
 int FlightController::updateFeatures(const std::set<std::string> &add,

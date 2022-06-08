@@ -94,8 +94,8 @@ int main(int argc, char* argv[]) {
     // using class method callback
     // fcu.subscribe(&App::onImu, &app, 0.1);
 
-    fcu.subscribe(&App::onServo, &app, 0.1);
-    fcu.subscribe(&App::onMotor, &app, 0.1);
+    // fcu.subscribe(&App::onServo, &app, 0.1);
+    // fcu.subscribe(&App::onMotor, &app, 0.1);
     fcu.subscribe(&App::onRc, &app, 0.1);
     // TODO: RawGPS
     // TODO: CompGPS

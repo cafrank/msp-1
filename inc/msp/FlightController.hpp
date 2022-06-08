@@ -328,6 +328,49 @@ public:
     bool setMotors(const std::array<uint16_t, msp::msg::N_MOTOR> &motor_values);
 
     /**
+     * @brief Directly sets Mixer values using SetMixer message
+     * @return True on successful message delivery
+     */
+    bool setMixer(const uint8_t mode);
+
+    /**
+     * @brief Directly sets InavMixer values using SetInavMixer message
+     * @return True on successful message delivery
+     */
+    bool setInavMixer(uint8_t platform, uint16_t preset, uint8_t hasFlaps, uint8_t invertMotorDir);
+
+    /**
+     * @brief Directly sets a servo mix rule values using MSP_SET_SERVO_MIX_RULE message
+     *  std::vector { target_channel, input_source, rate, speed, min, max, box }
+     * @return True on successful message delivery
+     */
+#ifdef THE_BETAFLIGHT_WAY
+    bool setServoMixRule(const uint8_t index, const std::vector<uint8_t> rule);
+#else
+    bool setServoMixRule(const uint8_t index, uint8_t chan, uint8_t src, uint16_t rate, uint8_t speed);
+#endif
+
+    /**
+     * @brief Directly sets a servo mix rule values using MSP_SET_SERVO_MIX_RULE message
+     * @return True on successful message delivery
+     */
+    bool setCommonMotorMixer(const uint8_t index, const std::vector<float> mix);
+    bool setCommonMotorMixer(const uint8_t index, const std::vector<uint8_t> mix);
+
+    /**
+     * @brief Directly sets the inav programming pids using MSP2_INAV_SET_PROGRAMMING_PID message
+     * @return True on successful message delivery
+     */
+    bool setInavProgrammingPid(uint8_t idx, const std::vector<uint16_t> pids);
+
+    /**
+     * @brief Directly sets the inav live pids using MSP2_SET_PID message
+     * @return True on successful message delivery
+     */
+    bool setPids(const std::vector<std::vector<uint16_t>> pids);
+
+
+    /**
      * @brief Enable and disable features on the FC
      * To apply updates, changes will be written to the EEPROM and the FC will
      * reboot.

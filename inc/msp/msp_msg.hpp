@@ -14,6 +14,12 @@
 #include <vector>
 #include "Message.hpp"
 
+#include <iostream>
+#include <string>
+#include <sstream>
+
+
+
 /*================================================================
  * actual messages have id and the relevant encode decode methods
  * the logic for encoding and decoding must be within a message-derived class
@@ -217,7 +223,16 @@ enum class ID : uint16_t {
     MSP2_INAV_SET_BATTERY_CONFIG = 0x2006,
     MSP2_INAV_RATE_PROFILE       = 0x2007,
     MSP2_INAV_SET_RATE_PROFILE   = 0x2008,
-    MSP2_INAV_AIR_SPEED          = 0x2009
+    MSP2_INAV_AIR_SPEED          = 0x2009,
+    MSP2_INAV_MIXER              = 0x2010,  // out message
+    MSP2_INAV_SET_MIXER          = 0x2011,  // out message
+
+    MSP2_INAV_PROGRAMMING_PID    = 0x2028,  // out message
+    MSP2_INAV_SET_PROGRAMMING_PID = 0x2029,
+    MSP2_INAV_PROGRAMMING_PID_STATUS = 0x202A, // out message
+
+    MSP2_PID                     = 0x2030, // out message
+    MSP2_SET_PID                 = 0x2031
 };
 
 enum class ArmingFlags : uint32_t {
@@ -534,6 +549,228 @@ struct BuildInfo : public Message {
     }
 };
 
+#define MAX_PROGRAMMING_PID_COUNT 4
+#define PID_ITEMS 11
+
+typedef enum logicOperandType_s {
+    LOGIC_CONDITION_OPERAND_TYPE_VALUE = 0,
+    LOGIC_CONDITION_OPERAND_TYPE_RC_CHANNEL,
+    LOGIC_CONDITION_OPERAND_TYPE_FLIGHT,
+    LOGIC_CONDITION_OPERAND_TYPE_FLIGHT_MODE,
+    LOGIC_CONDITION_OPERAND_TYPE_LC,    // Result of different LC and LC operand
+    LOGIC_CONDITION_OPERAND_TYPE_GVAR,  // Value from a global variable
+    LOGIC_CONDITION_OPERAND_TYPE_PID,  // Value from a Programming PID
+    LOGIC_CONDITION_OPERAND_TYPE_LAST
+} logicOperandType_e;
+
+typedef struct logicOperand_s {
+    union {
+        logicOperandType_e type;
+        uint8_t x;
+    } type;
+    uint32_t value;
+} logicOperand_t;
+
+typedef struct pid8_s {
+    uint16_t P;
+    uint16_t I;
+    uint16_t D;
+    uint16_t FF;
+} pid8_t;
+
+struct InavProgramingPidSettings {
+    uint8_t enabled;
+    logicOperand_t setpoint;
+    logicOperand_t measurement;
+    pid8_t gains;
+};
+
+// MSP2_PID = 0x2030,
+struct Pid2 : public Message {
+    Pid2(FirmwareVariant v) : Message(v) {}
+    virtual ID id() const override { return ID::MSP2_PID; }
+
+    std::vector<pid8_t> pids;
+
+    virtual bool decode(const ByteVector& data) override {
+        bool rc = true;
+        pids.clear();
+        do {
+            pid8_t tmp;
+            rc &= data.unpack(tmp.P);
+            rc &= data.unpack(tmp.I);
+            rc &= data.unpack(tmp.D);
+            rc &= data.unpack(tmp.FF);
+
+            if(rc) pids.push_back(tmp);
+        } while(rc);
+        return pids.size();
+    }
+
+    virtual std::ostream& print(std::ostream& s) const override {
+        std::cout << "Pid2.print bytes\n";
+        s << "#MSP2 PID:" << std::endl;
+        int i=0;
+        for(const auto& pid : pids) {
+            s << "  " << i++ << ": (";
+            s << (int) pid.P << "," << (int) pid.I << "," << (int) pid.D <<  "," << (int) pid.FF << ")" << std::endl;
+        }
+        return s;
+    }
+};
+
+// MSP2_SET_PID = 0x2031,
+struct SetPid2 : public Message {
+    SetPid2(FirmwareVariant v) : Message(v) {}
+    virtual ID id() const override { return ID::MSP2_SET_PID; }
+
+    std::vector<pid8_t> pids;
+
+    virtual int decode(std::vector<std::vector<uint16_t>> data) {
+        pids.clear();
+
+        for(const auto& pid : data) {
+            pid8_t tmp;
+            tmp.P  = pid[0];
+            tmp.I  = pid[1];
+            tmp.D  = pid[2];
+            tmp.FF = pid[3];
+            pids.push_back(tmp);
+        }
+        return data.size();
+    }
+
+    virtual ByteVectorUptr encode() const override {
+        ByteVectorUptr data = std::make_unique<ByteVector>();
+        bool rc             = true;
+        for(const auto& pid : pids) {
+            rc &= data->pack(pid.P);
+            rc &= data->pack(pid.I);
+            rc &= data->pack(pid.D);
+            rc &= data->pack(pid.FF);
+        }
+        if(!rc) data.reset();
+        return data;
+    }
+};
+
+typedef struct InavProgramingPidSettings InavProgramingPidSettings_t;
+
+// MSP2_INAV_SET_PROGRAMMING_PID = 0x2029,
+struct InavSetProgrammingPid : public Message {
+    InavSetProgrammingPid(FirmwareVariant v) : Message(v) {}
+
+    virtual ID id() const override { return ID::MSP2_INAV_SET_PROGRAMMING_PID; }
+
+    uint8_t index;
+    InavProgramingPidSettings_t config;
+
+    virtual int decode(uint8_t idx, std::vector<uint16_t> pid) {
+        index = idx;
+        config.enabled            = 1;
+        config.setpoint.type.x    = 1;
+        config.setpoint.value     = 1;
+        config.measurement.type.x = 1;
+        config.measurement.value  = 1;
+        config.gains.P  = pid[0];
+        config.gains.I  = pid[1];
+        config.gains.D  = pid[2];
+        config.gains.FF = pid[3];
+        return pid.size();
+    }
+
+    virtual ByteVectorUptr encode() const override {
+        ByteVectorUptr data = std::make_unique<ByteVector>();
+        bool rc             = true;
+        rc &= data->pack(index);
+        rc &= data->pack(config.enabled);
+        rc &= data->pack(config.setpoint.type.x);
+        rc &= data->pack(config.setpoint.value);
+        rc &= data->pack(config.measurement.type.x);
+        rc &= data->pack(config.measurement.value);
+        rc &= data->pack(config.gains.P);
+        rc &= data->pack(config.gains.I);
+        rc &= data->pack(config.gains.D);
+        rc &= data->pack(config.gains.FF);
+        if(!rc) data.reset();
+        return data;
+    }
+};
+
+const char *pidName[] = {" Pitch: ", " Roll:  ", " Yaw:   ", " FF:    ", };
+
+// MSP2_INAV_PROGRAMMING_PID: 0x2029
+struct InavProgrammingPid : public Message {
+    InavProgrammingPid(FirmwareVariant v) : Message(v) {}
+
+    virtual ID id() const override { return ID::MSP2_INAV_PROGRAMMING_PID; }
+
+//  struct InavProgramingPidSettings setting[MAX_PROGRAMMING_PID_COUNT];
+    std::vector<InavProgramingPidSettings_t> configs;
+ 
+    virtual bool decode(const ByteVector& data) override {
+        bool rc = true;
+        std::cout << "InavProgrammingPid.decode got: " << data.size() << " bytes\n";
+        
+        for (int i = 0; i < (int)data.size(); i++) {
+            std::cout << std::hex << std::setfill('0') << std::setw(2) << data[i] << " ";
+        }
+        std::cout << std::dec << "\n";
+        
+//      for (int i = 0; i < MAX_PROGRAMMING_PID_COUNT; i++) {
+//          rc &= data.unpack(setting[i].enabled);
+//          rc &= data.unpack(setting[i].setpoint.type.x);
+//          rc &= data.unpack(setting[i].setpoint.value);
+//          rc &= data.unpack(setting[i].measurement.type.x);
+//          rc &= data.unpack(setting[i].measurement.value);
+//          rc &= data.unpack(setting[i].gains.P);
+//          rc &= data.unpack(setting[i].gains.I);
+//          rc &= data.unpack(setting[i].gains.D);
+//          rc &= data.unpack(setting[i].gains.FF);
+//      }
+//      return rc;
+
+        configs.clear();
+        do {
+            InavProgramingPidSettings_t tmp;
+            rc &= data.unpack(tmp.enabled);
+            rc &= data.unpack(tmp.setpoint.type.x);
+            rc &= data.unpack(tmp.setpoint.value);
+            rc &= data.unpack(tmp.measurement.type.x);
+            rc &= data.unpack(tmp.measurement.value);
+            rc &= data.unpack(tmp.gains.P);
+            rc &= data.unpack(tmp.gains.I);
+            rc &= data.unpack(tmp.gains.D);
+            rc &= data.unpack(tmp.gains.FF);
+
+            if(rc) configs.push_back(tmp);
+        } while(rc);
+        return configs.size();
+    }
+
+    virtual std::ostream& print(std::ostream& s) const override {
+        std::cout << "InavProgrammingPid.print bytes\n";
+        s << "#INAV PID:" << std::endl;
+        int i=0;
+        for(const auto& config : configs) {
+            s << pidName[i++] << "(" << (int) config.enabled << "," << (int) config.setpoint.type.x << "," << (int) config.setpoint.value << ") ";;
+            s << (int) config.gains.P << "," << (int) config.gains.I << "," << (int) config.gains.D <<  "," << (int) config.gains.FF << std::endl;
+        }
+
+//      for (int i = 0; i < MAX_PROGRAMMING_PID_COUNT; i++) {
+//          s << pidName[i] << "(" << (int) setting[i].enabled << "," << (int) setting[i].setpoint.type.x << "," << (int) setting[i].setpoint.value << ") ";;
+//          s << (int) setting[i].gains.P << "," << (int) setting[i].gains.I << "," << (int) setting[i].gains.D <<  "," << (int) setting[i].gains.FF << std::endl;
+//      }
+
+//      s << " Pitch:" << buildTime << std::endl;
+//      s << " Yaw:  " << buildDate << std::endl;
+//      s << " Baro Poz Z n: " << shortGitRevision << std::endl;
+//      s << " Baro Vel Z n: " << shortGitRevision << std::endl;
+//      s << " Angle Level: " << shortGitRevision << std::endl;
+        return s;
+    }
+};
+
 struct InavPidSettings {
     Value<uint8_t> async_mode;
     Value<uint16_t> acc_task_frequency;
@@ -565,6 +802,17 @@ struct InavPid : public InavPidSettings, public Message {
         rc &= data.consume(4);
         return rc;
     }
+
+//  virtual std::ostream& print(std::ostream& s) const override {
+//      s << "#INAV PID:" << std::endl;
+//      s << " Roll: " << buildDate << std::endl;
+//      s << " Pitch:" << buildTime << std::endl;
+//      s << " Yaw:  " << buildDate << std::endl;
+//      s << " Baro Poz Z n: " << shortGitRevision << std::endl;
+//      s << " Baro Vel Z n: " << shortGitRevision << std::endl;
+//      s << " Angle Level: " << shortGitRevision << std::endl;
+//      return s;
+//  }
 };
 
 // MSP_SET_INAV_PID: 7
@@ -1167,6 +1415,69 @@ struct SetCurrentMeterConfig : public CurrentMeterConfigSettings,
     }
 };
 
+// MSP2_INAV_SET_MIXER:                     = 0x2011 //in message
+struct SetInavMixer : public Message {
+    SetInavMixer(FirmwareVariant v) : Message(v) {}
+
+    virtual ID id() const override { return ID::MSP2_INAV_SET_MIXER; }
+
+    Value<uint8_t>  motorDirectionInverted;
+    Value<uint16_t> wasYawJumpPreventLimit;
+    Value<uint8_t>  platformType;
+    Value<uint8_t>  hasFlaps;
+    Value<uint16_t> appliedMixerPreset;
+    Value<uint8_t>  maxSupportedMotors;
+    Value<uint8_t>  maxSupportedServos;
+
+    virtual ByteVectorUptr encode() const override {
+        ByteVectorUptr data = std::make_unique<ByteVector>();
+        bool rc           = true;
+        rc &= data->pack(motorDirectionInverted);
+        rc &= data->pack(wasYawJumpPreventLimit);
+        rc &= data->pack(platformType);
+        rc &= data->pack(hasFlaps);
+        rc &= data->pack(appliedMixerPreset);
+        rc &= data->pack(maxSupportedMotors);
+        rc &= data->pack(maxSupportedServos);
+        if (!rc) data.reset();
+        return data;
+    }
+};
+
+// MSP2_INAV_MIXER:                         = 0x2010 //out message
+struct InavMixer : public Message {
+    InavMixer(FirmwareVariant v) : Message(v) {}
+
+    virtual ID id() const override { return ID::MSP2_INAV_MIXER; }
+
+    Value<uint8_t>  motorDirectionInverted;
+    Value<uint16_t> wasYawJumpPreventLimit;
+    Value<uint8_t>  platformType;
+    Value<uint8_t>  hasFlaps;
+    Value<uint16_t> appliedMixerPreset;
+    Value<uint8_t>  maxSupportedMotors;
+    Value<uint8_t>  maxSupportedServos;
+
+    virtual bool decode(const ByteVector& data) override {
+        bool rc           = true;
+        rc &= data.unpack(motorDirectionInverted);
+        rc &= data.unpack(wasYawJumpPreventLimit);
+        rc &= data.unpack(platformType);
+        rc &= data.unpack(hasFlaps);
+        rc &= data.unpack(appliedMixerPreset);
+        rc &= data.unpack(maxSupportedMotors);
+        rc &= data.unpack(maxSupportedServos);
+        return rc;
+    }
+
+    virtual std::ostream& print(std::ostream& s) const override {
+        s << "#InavMixer:" << std::endl;
+        s << "  platformType:       " << platformType << std::endl;
+        s << "  appliedMixerPreset: " << appliedMixerPreset << std::endl;
+        return s;
+    }
+};
+
 // MSP_MIXER: 42
 struct Mixer : public Message {
     Mixer(FirmwareVariant v) : Message(v) {}
@@ -1177,6 +1488,11 @@ struct Mixer : public Message {
 
     virtual bool decode(const ByteVector& data) override {
         return data.unpack(mode);
+    }
+
+    virtual std::ostream& print(std::ostream& s) const override {
+        s << "#Mixer:   " << mode << std::endl;
+        return s;
     }
 };
 
@@ -4737,7 +5053,11 @@ struct AccTrim : public AccTrimSettings, public Message {
 struct ServoMixRule : public Packable {
     uint8_t target_channel;
     uint8_t input_source;
+#ifdef THE_BETAFLIGHT_WAY
     uint8_t rate;
+#else
+    uint16_t rate;	// The INAV way
+#endif
     uint8_t speed;
     uint8_t min;
     uint8_t max;
@@ -4779,6 +5099,7 @@ struct ServoMixRules : public Message {
 
     virtual bool decode(const ByteVector& data) override {
         bool rc = true;
+        rules.clear();
         while(data.unpacking_remaining()) {
             Value<ServoMixRule> rule;
             rc &= data.unpack(rule);
@@ -4796,13 +5117,23 @@ struct ServoMixRules : public Message {
 struct SetServoMixRule : public Message {
     SetServoMixRule(FirmwareVariant v) : Message(v) {}
 
-    virtual ID id() const override { return ID::MSP_SERVO_MIX_RULES; }
+    virtual ID id() const override { return ID::MSP_SET_SERVO_MIX_RULE; }
 
+    Value<uint8_t> index;
     Value<ServoMixRule> rule;
+
+//  virtual ByteVectorUptr encode() const override {
+//      ByteVectorUptr data = std::make_unique<ByteVector>();
+//      if(!data->pack(rule)) data.reset();
+//      return data;
+//  }
 
     virtual ByteVectorUptr encode() const override {
         ByteVectorUptr data = std::make_unique<ByteVector>();
-        if(!data->pack(rule)) data.reset();
+        bool rc             = true;
+        rc &= data->pack(index);
+        rc &= data->pack(rule);
+        if(!rc) data.reset();
         return data;
     }
 };
@@ -5113,21 +5444,32 @@ struct MotorMixer : public Packable {
     Value<float> pitch;
     Value<float> yaw;
 
+    bool unpack_float(const std::vector<float> data) {
+        throttle = (data[0]);
+        roll =     (data[1]);
+        pitch =    (data[2]);
+        yaw =      (data[3]);
+        return true;
+    }
+
     bool unpack_from(const ByteVector& data) {
         bool rc = true;
         rc &= data.unpack<uint16_t>(throttle, 1000);
         rc &= data.unpack<uint16_t>(roll, 1000, 1);
         rc &= data.unpack<uint16_t>(pitch, 1000, 1);
         rc &= data.unpack<uint16_t>(yaw, 1000, 1);
+        roll -= 1.0f;
+        pitch -= 1.0f;
+        yaw -= 1.0f;
         return rc;
     }
 
     bool pack_into(ByteVector& data) const {
         bool rc = true;
-        rc &= data.pack<uint16_t>(throttle, 1000, 1);
-        rc &= data.pack<uint16_t>(roll, 1000, 1);
-        rc &= data.pack<uint16_t>(pitch, 1000, 1);
-        rc &= data.pack<uint16_t>(yaw, 1000, 1);
+        rc &= data.pack<uint16_t>(throttle -1.0f, 1000, 1);
+        rc &= data.pack<uint16_t>(roll + 1.0f, 1000, 1);
+        rc &= data.pack<uint16_t>(pitch + 1.0f, 1000, 1);
+        rc &= data.pack<uint16_t>(yaw + 1.0f, 1000, 1);
         return rc;
     }
 };
@@ -5142,6 +5484,7 @@ struct CommonMotorMixer : public Message {
 
     virtual bool decode(const ByteVector& data) override {
         bool rc = true;
+        mixer.clear();
         while(data.unpacking_remaining()) {
             MotorMixer m;
             rc &= data.unpack(m);
